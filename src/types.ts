@@ -27,7 +27,7 @@ export interface SyncMetadata {
 export interface MarketingSpend {
   date: string;
   amount: number;
-  platform: 'google' | 'facebook' | 'amazon' | 'other';
+  platform: 'google' | 'facebook' | 'other';
 }
 
 export interface Invoice {
@@ -47,7 +47,6 @@ export interface Invoice {
   notes?: InvoiceNote[];
   isReinvoice?: boolean;
   contentSignature?: string;
-  processed?: boolean;
 }
 
 export type SalesChannel = 'amazon' | 'shopify' | 'ebay' | 'home24' | 'allegro' | 'kaufland';
@@ -57,6 +56,7 @@ export interface OrderItem {
   name: string;
   quantity: number;
   price: number;
+  cogs?: number;
 }
 
 export interface Order {
@@ -68,41 +68,14 @@ export interface Order {
   currency: string;
   tax: number;
   shipping: number;
+  shippingRevenue?: number;
   productCost: number;
   fees: number;
   discount: number;
   items: OrderItem[];
-  missingCost?: boolean;
-}
-
-export interface GoogleAdsDailyData {
-  date: string;
-  campaign: string;
-  cost: number;
-  clicks: number;
-  impressions: number;
-  currency: string;
-}
-
-export interface GoogleAdsGeoData {
-  date: string;
-  countryId: string;
-  cost: number;
-  clicks: number;
-  impressions: number;
-}
-
-export interface GoogleAdsResponse {
-  dailyData: GoogleAdsDailyData[];
-  geoData: GoogleAdsGeoData[];
-}
-
-export interface Anomaly {
-  id: string;
-  type: 'critical' | 'warning' | 'info';
-  title: string;
-  description: string;
-  timestamp: string;
+  hasMissingCogs?: boolean;
+  isShipped?: boolean;
+  countryCode?: string;
 }
 
 export enum ViewState {
@@ -111,35 +84,5 @@ export enum ViewState {
   INVOICES = 'invoices',
   ANALYTICS = 'analytics',
   EDITOR = 'editor',
-  SETTINGS = 'settings',
-  TEAM = 'team',
-  SEO_STUDIO = 'seo_studio',
-  CHAT = 'chat'
-}
-
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: Date;
-  isTyping?: boolean;
-}
-
-export interface User {
-  id: string;
-  email: string;
-  name?: string;
-  role: 'admin' | 'editor' | 'viewer';
-  joinedAt: string;
-  picture?: string;
-}
-
-export interface Invitation {
-  id: string;
-  email: string;
-  role: 'admin' | 'editor' | 'viewer';
-  token: string;
-  invitedBy: string;
-  createdAt: string;
-  expiresAt: string;
+  SETTINGS = 'settings'
 }

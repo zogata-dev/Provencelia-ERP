@@ -1,6 +1,6 @@
 
 // SEM VLOŽTE SVÉ NOVÉ CLIENT ID, KTERÉ VYGENERUJETE V GOOGLE CONSOLE
-const CLIENT_ID = '661868854979-1bbf8m0sagpcl6e7m7t8avrsfvmb6sh3.apps.googleusercontent.com';
+const CLIENT_ID = '381438079625-8akca5gf7nja3o5h627le7jmiqdbue63.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets';
 
 let tokenClient: any = null;
@@ -19,10 +19,23 @@ export const initGoogleAuth = (onTokenReceived: (token: string) => void) => {
             console.error('OAuth Error:', response.error);
             throw response;
           }
+          // Save token and expiration (typically 3600 seconds)
+          const expiresAt = Date.now() + (response.expires_in * 1000);
+          localStorage.setItem('google_access_token', response.access_token);
+          localStorage.setItem('google_token_expires', expiresAt.toString());
+          
           onTokenReceived(response.access_token);
         },
       });
       console.log('Google Auth Initialized');
+
+      // Check if we already have a valid token saved
+      const savedToken = localStorage.getItem('google_access_token');
+      const expiresAt = localStorage.getItem('google_token_expires');
+      if (savedToken && expiresAt && Date.now() < parseInt(expiresAt, 10)) {
+        console.log('Using saved Google Access Token');
+        onTokenReceived(savedToken);
+      }
     } else {
       setTimeout(checkGoogle, 200);
     }
@@ -34,7 +47,9 @@ export const initGoogleAuth = (onTokenReceived: (token: string) => void) => {
 export const requestAccessToken = () => {
   if (tokenClient) {
     try {
-      tokenClient.requestAccessToken({ prompt: 'consent' });
+      // Use prompt: '' to try silent auth if they've already consented before, 
+      // but if it fails or requires interaction, it will show the popup.
+      tokenClient.requestAccessToken({ prompt: '' });
     } catch (err) {
       console.error('Failed to request access token:', err);
     }

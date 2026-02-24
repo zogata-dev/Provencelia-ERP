@@ -7,22 +7,22 @@ import Invoices from './components/Invoices';
 import DataManager from './components/DataManager';
 import Analytics from './components/Analytics';
 import Orders from './components/Orders';
-import TeamManagement from './components/TeamManagement';
-import SEOStudio from './components/SEOStudio';
-import BusinessChat from './components/BusinessChat';
-import { ViewState, DriveFile, Invoice, InvoiceNote, SyncMetadata, Order, MarketingSpend, User, GoogleAdsDailyData, GoogleAdsGeoData, Anomaly } from './types';
-import Cookies from 'js-cookie';
-import Papa from 'papaparse';
-import { INITIAL_SCRIPT, FOLDER_ID, SHEET_ID, ORDERS_SHEET_ID, CATEGORIES as DEFAULT_CATEGORIES } from './constants';
+import { ViewState, DriveFile, Invoice, InvoiceNote, SyncMetadata, Order, MarketingSpend } from './types';
+import { INITIAL_SCRIPT, FOLDER_ID, SHEET_ID, ORDERS_SHEET_ID, COGS_SHEET_ID, CATEGORIES as DEFAULT_CATEGORIES } from './constants';
 import { interpretScript, extractInvoiceDataFromSingleFile, getCnbRates } from './services/geminiService';
 import { initGoogleAuth, fetchDriveFilesRecursive, requestAccessToken, fetchFileBase64 } from './services/googleDriveService';
-import { fetchInvoicesFromSheet, saveInvoicesToSheet, fetchOrdersFromSheet, fetchMarketingSpendsFromSheet } from './services/googleSheetsService';
+import { fetchInvoicesFromSheet, saveInvoicesToSheet, fetchOrdersFromSheet, fetchMarketingSpendsFromSheet, fetchCogsFromSheet } from './services/googleSheetsService';
+
+import { generateDummyInvoices, generateDummyOrders, generateDummyMarketing } from './services/dummyData';
+
+import AIChat from './components/AIChat';
 
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<ViewState>(ViewState.DASHBOARD);
   const [script, setScript] = useState(INITIAL_SCRIPT);
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   
   const [categories, setCategories] = useState<string[]>(() => {
     const saved = localStorage.getItem('provencelia_categories');
@@ -35,15 +35,18 @@ const App: React.FC = () => {
   });
 
   const [orders, setOrders] = useState<Order[]>([]);
-  const [marketingSpends, setMarketingSpends] = useState<MarketingSpend[]>(() => {
-    const saved = localStorage.getItem('provencelia_marketing_spends');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [isGoogleSheetsConnected, setIsGoogleSheetsConnected] = useState(false);
-  const [lastSheetsSync, setLastSheetsSync] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [googleAdsData, setGoogleAdsData] = useState<{ daily: GoogleAdsDailyData[], geo: GoogleAdsGeoData[] }>({ daily: [], geo: [] });
-  const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
+  const [marketingSpends, setMarketingSpends] = useState<MarketingSpend[]>([]);
+  const [orderLogs, setOrderLogs] = useState<string[]>([]);
+
+  // Load dummy data if needed
+  useEffect(() => {
+    if (extractedInvoices.length === 0) {
+      setExtractedInvoices(generateDummyInvoices());
+    }
+    if (marketingSpends.length === 0) {
+      setMarketingSpends(generateDummyMarketing());
+    }
+  }, []);
 
   const [processedManifest, setProcessedManifest] = useState<Set<string>>(() => {
     const saved = localStorage.getItem('provencelia_processed_ids_v3');
@@ -54,63 +57,6 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('provencelia_sync_metadata_v3');
     return saved ? JSON.parse(saved) : null;
   });
-
-  useEffect(() => {
-    localStorage.setItem('provencelia_marketing_spends', JSON.stringify(marketingSpends));
-  }, [marketingSpends]);
-
-  const handleUploadAmazonReport = (file: File) => {
-    setSyncLogs(prev => [...prev.slice(-49), `📄 Processing ${file.name}...`]);
-    
-    Papa.parse(file, {
-      header: true,
-      complete: (results) => {
-        const data = results.data as any[];
-        const newSpends: MarketingSpend[] = [];
-        const dailyMap = new Map<string, number>();
-
-        data.forEach(row => {
-          // Try to find date and cost columns
-          const dateStr = row['Date'] || row['date'] || row['Start Date'];
-          const costStr = row['Cost'] || row['Spend'] || row['spend'] || row['cost'] || row['Total Spend'];
-          
-          if (dateStr && costStr) {
-             const date = new Date(dateStr);
-             if (!isNaN(date.getTime())) {
-               const isoDate = date.toISOString().split('T')[0];
-               // Handle currency symbols and commas
-               const cleanCost = costStr.toString().replace(/[^\d.,]/g, '').replace(',', '.');
-               const cost = parseFloat(cleanCost);
-               if (!isNaN(cost)) {
-                 dailyMap.set(isoDate, (dailyMap.get(isoDate) || 0) + cost);
-               }
-             }
-          }
-        });
-
-        dailyMap.forEach((amount, date) => {
-          newSpends.push({
-            date,
-            amount,
-            platform: 'amazon'
-          });
-        });
-
-        if (newSpends.length > 0) {
-          setMarketingSpends(prev => {
-             const nonAmazon = prev.filter(s => s.platform !== 'amazon');
-             return [...nonAmazon, ...newSpends];
-          });
-          setSyncLogs(prev => [...prev.slice(-49), `✅ Parsed ${newSpends.length} days of Amazon spend data.`]);
-        } else {
-          setSyncLogs(prev => [...prev.slice(-49), '⚠️ No valid data found. Columns needed: Date, Cost/Spend.']);
-        }
-      },
-      error: (error: any) => {
-        setSyncLogs(prev => [...prev.slice(-49), `❌ CSV Parse Error: ${error.message}`]);
-      }
-    });
-  };
 
   const formatDateString = (date: Date) => {
     return `${date.getDate()}.${date.getMonth() + 1}.${date.getFullYear()}`;
@@ -133,127 +79,46 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncLogs, setSyncLogs] = useState<string[]>([]);
 
-  // Anomaly Detection Logic
-  useEffect(() => {
-    const detected: Anomaly[] = [];
-    const now = new Date();
+  const loadOrdersData = async (token: string, addLog?: (msg: string) => void) => {
+    const [orderData, cogsData, rates] = await Promise.all([
+      fetchOrdersFromSheet(ORDERS_SHEET_ID, token, addLog),
+      fetchCogsFromSheet(COGS_SHEET_ID, token, addLog),
+      getCnbRates()
+    ]);
 
-    // 1. Check for missing costs in recent orders
-    const recentOrders = orders.filter(o => {
-      const d = new Date(o.date);
-      return (now.getTime() - d.getTime()) < (7 * 24 * 60 * 60 * 1000);
+    const updatedOrders = orderData.map(order => {
+      let totalCogs = 0;
+      let hasMissingCogs = false;
+      
+      const currency = order.currency.toUpperCase();
+      // Calculate rate from EUR to order currency
+      // rates object contains values like { EUR: 25.3, USD: 23.1, PLN: 5.8 } (relative to CZK)
+      // So 1 EUR = rates.EUR CZK
+      // 1 PLN = rates.PLN CZK -> 1 EUR = rates.EUR / rates.PLN PLN
+      let eurToCurrencyRate = 1;
+      if (currency === 'CZK') {
+        eurToCurrencyRate = rates.EUR || 25.3;
+      } else if (currency !== 'EUR' && rates[currency as keyof typeof rates]) {
+        eurToCurrencyRate = (rates.EUR || 25.3) / (rates[currency as keyof typeof rates] || 1);
+      }
+
+      const updatedItems = order.items.map(item => {
+        const unitCostEur = cogsData[item.sku];
+        let unitCostCurrency: number | undefined = undefined;
+        
+        if (unitCostEur === undefined) {
+          hasMissingCogs = true;
+        } else {
+          unitCostCurrency = unitCostEur * eurToCurrencyRate;
+          totalCogs += unitCostCurrency * item.quantity;
+        }
+        return { ...item, cogs: unitCostCurrency };
+      });
+      return { ...order, items: updatedItems, productCost: totalCogs, hasMissingCogs };
     });
-    const missingCosts = recentOrders.filter(o => o.missingCost);
-    if (missingCosts.length > 0) {
-      detected.push({
-        id: 'missing-costs',
-        type: 'warning',
-        title: 'Missing Purchase Prices',
-        description: `${missingCosts.length} recent orders are missing product cost data, affecting profit accuracy.`,
-        timestamp: now.toISOString()
-      });
-    }
 
-    // 2. Check for MER drops (if we have ads data)
-    if (googleAdsData.daily.length > 7) {
-      const sortedAds = [...googleAdsData.daily].sort((a, b) => b.date.localeCompare(a.date));
-      const latestDay = sortedAds[0];
-      const prev7Days = sortedAds.slice(1, 8);
-      const avgSpend = prev7Days.reduce((sum, s) => sum + s.cost, 0) / 7;
-      
-      if (latestDay.cost > avgSpend * 1.5) {
-        detected.push({
-          id: 'spend-spike',
-          type: 'critical',
-          title: 'Ad Spend Spike',
-          description: `Yesterday's spend (${latestDay.cost.toLocaleString()} CZK) is 50%+ higher than the 7-day average.`,
-          timestamp: now.toISOString()
-        });
-      }
-    }
-
-    // 3. Check for high-value unverified invoices
-    const unverifiedHighValue = extractedInvoices.filter((inv: Invoice) => !inv.processed && (inv.eurValue || 0) > 1000);
-    if (unverifiedHighValue.length > 0) {
-      detected.push({
-        id: 'high-value-invoices',
-        type: 'info',
-        title: 'High-Value Pending Invoices',
-        description: `There are ${unverifiedHighValue.length} unverified invoices over €1,000 awaiting review.`,
-        timestamp: now.toISOString()
-      });
-    }
-
-    setAnomalies(detected);
-  }, [orders, googleAdsData, extractedInvoices]);
-
-  const fetchRealSheetsData = useCallback(async () => {
-    try {
-      const profile = Cookies.get('user_profile');
-      if (profile) setCurrentUser(JSON.parse(profile));
-
-      const [sheetsRes, adsRes] = await Promise.all([
-        fetch('/api/sheets/data'),
-        fetch('/api/google-ads/data')
-      ]);
-
-      if (sheetsRes.ok) {
-        const data = await sheetsRes.json();
-        setOrders(data.orders);
-        setLastSheetsSync(data.lastSync);
-        setIsGoogleSheetsConnected(true);
-      } else if (sheetsRes.status === 401) {
-        setIsGoogleSheetsConnected(false);
-      }
-
-      if (adsRes.ok) {
-        const data = await adsRes.json();
-        setGoogleAdsData({ daily: data.dailyData, geo: data.geoData });
-      }
-    } catch (error) {
-      console.error('Error fetching real sheets/ads data:', error);
-    }
-  }, []);
-
-  const handleConnectGoogleSheets = async () => {
-    try {
-      const response = await fetch('/api/auth/google/url');
-      const { url } = await response.json();
-      const width = 600, height = 700;
-      const left = window.screenX + (window.outerWidth - width) / 2;
-      const top = window.screenY + (window.outerHeight - height) / 2;
-      const authWindow = window.open(url, 'google_oauth', `width=${width},height=${height},left=${left},top=${top}`);
-      
-      if (!authWindow) {
-        alert('Please allow popups to connect Google Sheets.');
-        return;
-      }
-    } catch (error) {
-      console.error('Error connecting Google Sheets:', error);
-    }
+    return updatedOrders;
   };
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        fetchRealSheetsData();
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    fetchRealSheetsData(); // Initial check
-
-    // Regular sync every 10 minutes
-    const interval = setInterval(() => {
-      if (isGoogleSheetsConnected) {
-        fetchRealSheetsData();
-      }
-    }, 10 * 60 * 1000);
-
-    return () => {
-      window.removeEventListener('message', handleMessage);
-      clearInterval(interval);
-    };
-  }, [fetchRealSheetsData, isGoogleSheetsConnected]);
 
   useEffect(() => {
     initGoogleAuth(async (token) => {
@@ -267,11 +132,9 @@ const App: React.FC = () => {
         setProcessedManifest(ids);
       }
 
-      // Fetch Orders only if backend sync is not connected
-      if (!isGoogleSheetsConnected) {
-        const orderData = await fetchOrdersFromSheet(ORDERS_SHEET_ID, token);
-        setOrders(orderData);
-      }
+      // Fetch Orders & COGS
+      const updatedOrders = await loadOrdersData(token);
+      setOrders(updatedOrders);
 
       // Fetch Marketing
       const spendData = await fetchMarketingSpendsFromSheet(ORDERS_SHEET_ID, token);
@@ -447,9 +310,8 @@ const App: React.FC = () => {
       activeView={activeView} 
       setActiveView={setActiveView} 
       appName="Provencelia DB" 
-      isSyncing={isSyncing} 
-      currentUser={currentUser}
-      anomalies={anomalies}
+      isSyncing={isSyncing}
+      onOpenChat={() => setIsChatOpen(true)}
     >
       {activeView === ViewState.DASHBOARD && (
         <Dashboard 
@@ -459,10 +321,25 @@ const App: React.FC = () => {
           pendingCount={pendingQueueCount}
           orders={orders}
           marketingSpends={marketingSpends}
-          googleAdsData={googleAdsData}
         />
       )}
-      {activeView === ViewState.ORDERS && <Orders orders={orders} />}
+      {activeView === ViewState.ORDERS && (
+        <Orders 
+          orders={orders} 
+          logs={orderLogs}
+          onRefresh={async () => {
+            if (googleAccessToken) {
+              setOrderLogs([]);
+              const updatedOrders = await loadOrdersData(googleAccessToken, (msg) => {
+                setOrderLogs(prev => [...prev, msg]);
+              });
+              if (updatedOrders.length > 0) setOrders(updatedOrders);
+            } else {
+              alert("Prosím připojte se nejprve k Google Workspace v sekci System Sync.");
+            }
+          }}
+        />
+      )}
       {activeView === ViewState.INVOICES && (
         <Invoices 
           driveInvoices={uniqueInvoices} categories={categories}
@@ -474,23 +351,6 @@ const App: React.FC = () => {
         />
       )}
       {activeView === ViewState.ANALYTICS && <Analytics invoices={uniqueInvoices} />}
-      {activeView === ViewState.SEO_STUDIO && <SEOStudio />}
-      {activeView === ViewState.CHAT && (
-        <BusinessChat 
-          orders={orders} 
-          invoices={uniqueInvoices} 
-          marketingSpends={marketingSpends} 
-          googleAdsData={googleAdsData} 
-        />
-      )}
-      {activeView === ViewState.TEAM && <TeamManagement currentUser={currentUser} />}
-      {activeView === ViewState.EDITOR && (
-        <ScriptEditor 
-          script={script} 
-          setScript={setScript} 
-          onDeploy={() => handleSyncDrive(true)} 
-        />
-      )}
       {activeView === ViewState.SETTINGS && (
         <DataManager 
           onSyncDrive={() => handleSyncDrive(true)} 
@@ -498,13 +358,15 @@ const App: React.FC = () => {
           onConnect={requestAccessToken} externalLogs={syncLogs} 
           syncMetadata={syncMetadata} pendingCount={pendingQueueCount}
           autoSyncEnabled={autoSyncEnabled} setAutoSyncEnabled={setAutoSyncEnabled}
-          isGoogleSheetsConnected={isGoogleSheetsConnected}
-          onConnectGoogleSheets={handleConnectGoogleSheets}
-          onRefreshGoogleSheets={fetchRealSheetsData}
-          lastSheetsSync={lastSheetsSync}
-          onUploadAmazonReport={handleUploadAmazonReport}
         />
       )}
+      
+      <AIChat 
+        isOpen={isChatOpen} 
+        onClose={() => setIsChatOpen(false)} 
+        invoices={uniqueInvoices} 
+        orders={orders} 
+      />
     </Layout>
   );
 };

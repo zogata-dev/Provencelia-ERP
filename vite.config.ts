@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import path from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -8,8 +9,17 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
+  define: {
+    'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY),
+    'process.env.API_KEY': JSON.stringify(process.env.GEMINI_API_KEY), // Fallback for existing code
+  },
   server: {
-    port: 3000,
     host: '0.0.0.0',
+    port: 3000,
   },
 });

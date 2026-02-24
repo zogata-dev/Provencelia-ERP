@@ -1,5 +1,5 @@
 {
-  "name": "Provencelia Management Studio",
-  "description": "Integrated invoice OCR, order synchronization, profit analysis, Search Console insights, and team management for Provencelia.",
+  "name": "Provencelia Invoice Manager",
+  "description": "A high-end invoice management and OCR system tailored for the Provencelia brand aesthetics.",
   "requestFramePermissions": []
 }
